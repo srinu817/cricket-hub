@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, selectinload
@@ -32,6 +33,18 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Cricket Hub API", version="1.0.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[APP_ORIGIN],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type"],
+)
+
+
+def session_cookie_policy() -> tuple[bool, str]:
+    secure = os.getenv("APP_ENV", "development").lower() == "production"
+    return secure, "none" if secure else "strict"
 
 
 def bootstrap_admin() -> None:
@@ -150,13 +163,14 @@ def login(payload: LoginInput, request: Request, response: Response, db: Session
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email or password is incorrect")
     token = secrets.token_urlsafe(32)
     sessions[token] = time.time() + SESSION_SECONDS
+    secure_cookie, same_site = session_cookie_policy()
     response.set_cookie(
         SESSION_COOKIE,
         token,
         max_age=SESSION_SECONDS,
         httponly=True,
-        secure=os.getenv("APP_ENV", "development").lower() == "production",
-        samesite="strict",
+        secure=secure_cookie,
+        samesite=same_site,
         path="/",
     )
     return {"authenticated": True}
@@ -166,7 +180,14 @@ def login(payload: LoginInput, request: Request, response: Response, db: Session
 def logout(request: Request, response: Response):
     validate_origin(request)
     sessions.pop(request.cookies.get(SESSION_COOKIE, ""), None)
-    response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="strict")
+    secure_cookie, same_site = session_cookie_policy()
+    response.delete_cookie(
+        SESSION_COOKIE,
+        path="/",
+        httponly=True,
+        secure=secure_cookie,
+        samesite=same_site,
+    )
     return {"authenticated": False}
 
 

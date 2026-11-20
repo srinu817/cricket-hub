@@ -56,6 +56,33 @@ def test_health_checks_database(client):
     assert response.json() == {"status": "ok", "database": "connected"}
 
 
+def test_cors_allows_configured_local_frontend_with_credentials(client):
+    response = client.options(
+        "/api/v1/auth/login",
+        headers={
+            "Origin": "http://127.0.0.1:5173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+    assert response.headers["access-control-allow-credentials"] == "true"
+
+
+def test_production_session_cookie_is_cross_site_and_secure(client, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "admin@example.test", "password": "test-only-password"},
+    )
+    assert response.status_code == 200
+    cookie = response.headers["set-cookie"].lower()
+    assert "samesite=none" in cookie
+    assert "secure" in cookie
+    assert "httponly" in cookie
+
+
 def test_startup_seeds_one_hashed_admin_without_signup(client):
     with SessionLocal() as db:
         admins = db.scalars(select(AdminUser)).all()

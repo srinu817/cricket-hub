@@ -16,8 +16,13 @@ type Match = {
 }
 
 const emptyScore = (teamCode: string): Innings => ({ teamCode, total: '', overs: '', batting: [], bowling: [] })
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
 const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(url, { ...init, headers: { 'content-type': 'application/json', ...init?.headers } })
+  const response = await fetch(`${apiBaseUrl}${url}`, {
+    ...init,
+    credentials: 'include',
+    headers: { 'content-type': 'application/json', ...init?.headers },
+  })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
     const detail = typeof body.detail === 'string'
