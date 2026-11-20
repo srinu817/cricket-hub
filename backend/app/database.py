@@ -1,10 +1,13 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+
+load_dotenv()
 
 if os.getenv("DATABASE_URL"):
     DATABASE_URL = os.environ["DATABASE_URL"]

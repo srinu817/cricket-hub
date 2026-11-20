@@ -1,10 +1,18 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import Date, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Date, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.database import Base
+
+
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
 
 
 class Match(Base):

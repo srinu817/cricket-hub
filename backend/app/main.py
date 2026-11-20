@@ -10,9 +10,10 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, selectinload
 
-from backend.app.database import Base, DATABASE_URL, engine, get_db
-from backend.app.models import BattingEntry, BowlingEntry, Commentary, Innings, Match
+from backend.app.database import Base, DATABASE_URL, SessionLocal, engine, get_db
+from backend.app.models import AdminUser, BattingEntry, BowlingEntry, Commentary, Innings, Match
 from backend.app.schemas import LoginInput, MatchInput, MatchOut
+from backend.app.security import hash_password, verify_password
 
 APP_ORIGIN = os.getenv("CRICKET_APP_ORIGIN", "http://127.0.0.1:5173")
 SESSION_COOKIE = "cricket_admin_session"
@@ -26,10 +27,33 @@ FRONTEND_DIST = PROJECT_ROOT / "dist"
 async def lifespan(_: FastAPI):
     if DATABASE_URL.startswith("sqlite"):
         Base.metadata.create_all(bind=engine)
+    bootstrap_admin()
     yield
 
 
 app = FastAPI(title="Cricket Hub API", version="1.0.0", lifespan=lifespan)
+
+
+def bootstrap_admin() -> None:
+    email = os.getenv("CRICKET_ADMIN_EMAIL", "").strip().lower()
+    password = os.getenv("CRICKET_ADMIN_PASSWORD", "")
+    if "@" not in email or len(email) > 254:
+        raise RuntimeError("Set CRICKET_ADMIN_EMAIL to a valid admin email before starting the API")
+    if len(password) < 12:
+        raise RuntimeError("Set CRICKET_ADMIN_PASSWORD to a password with at least 12 characters")
+
+    with SessionLocal() as db:
+        admins = db.scalars(select(AdminUser).order_by(AdminUser.id)).all()
+        if not admins:
+            db.add(AdminUser(email=email, password_hash=hash_password(password)))
+        else:
+            admin = admins[0]
+            admin.email = email
+            if not verify_password(password, admin.password_hash):
+                admin.password_hash = hash_password(password)
+            for duplicate in admins[1:]:
+                db.delete(duplicate)
+        db.commit()
 
 
 def validate_origin(request: Request) -> None:
@@ -116,20 +140,15 @@ def auth_session(request: Request):
     expires_at = sessions.get(token)
     if expires_at is None or expires_at <= time.time():
         sessions.pop(token, None)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
+        return {"authenticated": False}
     return {"authenticated": True}
 
 
 @app.post("/api/v1/auth/login")
-def login(payload: LoginInput, request: Request, response: Response):
+def login(payload: LoginInput, request: Request, response: Response, db: Session = Depends(get_db)):
     validate_origin(request)
-    admin_email = os.getenv("CRICKET_ADMIN_EMAIL", "")
-    admin_password = os.getenv("CRICKET_ADMIN_PASSWORD", "")
-    if not admin_email or not admin_password:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Admin credentials are not configured on the server")
-    valid_email = secrets.compare_digest(payload.email, admin_email)
-    valid_password = secrets.compare_digest(payload.password, admin_password)
-    if not (valid_email & valid_password):
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.strip().lower()))
+    if admin is None or not verify_password(payload.password, admin.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email or password is incorrect")
     token = secrets.token_urlsafe(32)
     sessions[token] = time.time() + SESSION_SECONDS

@@ -1,3 +1,10 @@
+from sqlalchemy import select
+
+from backend.app.database import SessionLocal
+from backend.app.models import AdminUser
+from backend.app.security import verify_password
+
+
 MATCH = {
     "series": "Test series",
     "stage": "Final",
@@ -41,6 +48,17 @@ def test_health_checks_database(client):
     response = client.get("/api/v1/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "database": "connected"}
+
+
+def test_startup_seeds_one_hashed_admin_without_signup(client):
+    with SessionLocal() as db:
+        admins = db.scalars(select(AdminUser)).all()
+    assert len(admins) == 1
+    assert admins[0].email == "admin@example.test"
+    assert admins[0].password_hash != "test-only-password"
+    assert verify_password("test-only-password", admins[0].password_hash)
+    assert client.post("/api/v1/auth/signup", json={}).status_code in (404, 405)
+    assert client.get("/api/v1/auth/session").json() == {"authenticated": False}
 
 
 def test_match_crud_persists_nested_scorecard_and_commentary(client):

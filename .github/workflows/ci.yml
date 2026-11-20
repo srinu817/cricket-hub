@@ -21,5 +21,5 @@ jobs:
       - run: npm ci
       - run: python -m pytest -q
       - run: npm run build
-      - run: cp .env.example .env && docker compose config --quiet
+      - run: cp .env.example .env && POSTGRES_PASSWORD=ci-only-password-1234 CRICKET_ADMIN_PASSWORD=ci-only-admin-password docker compose config --quiet
       - run: docker build -t cricket-hub:ci .

@@ -16,15 +16,17 @@ Requirements: Node.js 22, Python 3.13, and npm.
 In PowerShell, from the project directory:
 
 ```powershell
+Copy-Item .env.example .env
+notepad .env
+# Set CRICKET_ADMIN_PASSWORD to your own 12+ character password, then save.
 python -m pip install -r requirements-dev.txt
 npm install
-$env:CRICKET_ADMIN_EMAIL = "your-admin@example.com"
-$env:CRICKET_ADMIN_PASSWORD = "use-a-long-unique-password"
-$env:CRICKET_APP_ORIGIN = "http://127.0.0.1:5173"
 npm run start
 ```
 
-Open `http://127.0.0.1:5173` and sign in at `/admin`. The API creates the local SQLite schema on startup and stores data in `data/cricket_hub.db`. `npm run start` launches the FastAPI and Vite development servers together. They can also be started separately with `npm run api` and `npm run dev`.
+Open `http://127.0.0.1:5173` and sign in at `/admin`. On first startup, the API creates exactly one admin row from `CRICKET_ADMIN_EMAIL` and `CRICKET_ADMIN_PASSWORD`; the database stores a salted PBKDF2 hash, not the password. There is intentionally no public signup route. The environment values also rotate that single seeded admin on a later startup.
+
+Use the email `admin@crickethub.com` if desired, but choose your own strong password of at least 12 characters. The suggested `admin@123` is too weak and is not included in the repository or database seed. The API creates the local SQLite schema on startup and stores match data in `data/cricket_hub.db`. `npm run start` launches the FastAPI and Vite development servers together. They can also be started separately with `npm run api` and `npm run dev`.
 
 ## Docker deployment
 
@@ -37,7 +39,7 @@ docker compose up --build -d
 docker compose logs -f app
 ```
 
-Replace every example password in `.env`. Set `CRICKET_APP_ORIGIN` to the exact public origin, such as `https://cricket.example.com`, and set `APP_ENV=production` when HTTPS is enabled so the admin cookie uses the `Secure` attribute. The database is stored in the `postgres_data` named volume. Do not commit `.env`; keep the database password and admin credentials in the deployment platform's secret manager.
+Set a unique `POSTGRES_PASSWORD` and an admin password of at least 12 characters in `.env`. Set `CRICKET_APP_ORIGIN` to the exact public origin, such as `https://cricket.example.com`, and set `APP_ENV=production` when HTTPS is enabled so the admin cookie uses the `Secure` attribute. The database is stored in the `postgres_data` named volume. Do not commit `.env`; keep the database password and admin credentials in the deployment platform's secret manager.
 
 The API health check is `/api/v1/health`. OpenAPI documentation is available at `/docs`.
 

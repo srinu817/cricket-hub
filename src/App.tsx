@@ -204,7 +204,11 @@ function Admin({ matches, onRefresh }: { matches: Match[]; onRefresh: () => Prom
   const [editing, setEditing] = useState<Match | null>(null)
   const [notice, setNotice] = useState('')
 
-  useEffect(() => { api('/api/v1/auth/session').then(() => setAuthenticated(true)).catch(() => setAuthenticated(false)) }, [])
+  useEffect(() => {
+    api<{ authenticated: boolean }>('/api/v1/auth/session')
+      .then(session => setAuthenticated(session.authenticated))
+      .catch(() => setAuthenticated(false))
+  }, [])
   const login = async (event: FormEvent) => {
     event.preventDefault(); setError(''); setBusy(true)
     try { await api('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }); setAuthenticated(true) }
@@ -223,9 +227,9 @@ function Admin({ matches, onRefresh }: { matches: Match[]; onRefresh: () => Prom
   if (authenticated === null) return <main className="login-page"><p>Checking admin session…</p></main>
   if (!authenticated) return <main className="login-page"><form className="login-card" onSubmit={login}>
     <div className="login-mark"><ShieldCheck size={24}/></div><span className="eyebrow">ADMINISTRATION</span><h1>Admin sign in</h1>
-    <p className="muted-copy">Sign in with the credentials configured on the server.</p>
+    <p className="muted-copy">One administrator account is created from server configuration. Public signup is disabled.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <label>Email<input type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} placeholder="Admin email"/></label>
+    <label>Email<input type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} placeholder="admin@crickethub.com"/></label>
     <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Password"/></label>
     <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
   </form></main>
