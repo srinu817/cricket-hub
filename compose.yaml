@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cricket_hub}
+      POSTGRES_USER: ${POSTGRES_USER:-cricket_hub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-cricket_hub}
+      DB_USER: ${POSTGRES_USER:-cricket_hub}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      CRICKET_ADMIN_EMAIL: ${CRICKET_ADMIN_EMAIL:?Set CRICKET_ADMIN_EMAIL in .env}
+      CRICKET_ADMIN_PASSWORD: ${CRICKET_ADMIN_PASSWORD:?Set CRICKET_ADMIN_PASSWORD in .env}
+      CRICKET_APP_ORIGIN: ${CRICKET_APP_ORIGIN:?Set CRICKET_APP_ORIGIN in .env}
+      APP_ENV: ${APP_ENV:-development}
+    ports:
+      - "${PORT:-8787}:8787"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/v1/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres_data:
