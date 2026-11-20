@@ -43,6 +43,29 @@ Set a unique `POSTGRES_PASSWORD` and an admin password of at least 12 characters
 
 The API health check is `/api/v1/health`. OpenAPI documentation is available at `/docs`.
 
+## Render deployment (backend API)
+
+Create a Render **Python Web Service** from the repository. Keep **Root Directory** blank (the repository root), so Python can import the `backend` package and Alembic can find `alembic.ini`.
+
+Use these commands:
+
+```text
+Build Command: pip install -r requirements.txt
+Start Command: python -m alembic upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+```
+
+The application variable is `app` in `backend/app/main.py`. Do not use `uvicorn main:app`: there is no repository-root `main.py`, and when the service root is set to `backend/app`, the parent `backend` package is no longer importable.
+
+Add these environment variables in Render:
+
+- `DATABASE_URL`: the Render PostgreSQL connection URL. The app converts standard `postgres://` and `postgresql://` URLs to the installed `psycopg` v3 driver.
+- `CRICKET_ADMIN_EMAIL`: the admin sign-in email.
+- `CRICKET_ADMIN_PASSWORD`: a strong password of at least 12 characters.
+- `CRICKET_APP_ORIGIN`: the exact public service origin, such as `https://your-service.onrender.com`.
+- `APP_ENV`: `production`, so admin session cookies are marked secure.
+
+Do not omit `DATABASE_URL` on Render: without it, the app falls back to local SQLite, which is not durable on a hosted service. Migrations run at startup before the app bootstraps the admin account. This Python service serves the API; it will not include the React site unless the frontend is built into `dist` as in the Docker deployment.
+
 ## API
 
 - `GET /api/v1/matches` and `GET /api/v1/matches/{id}` are public.

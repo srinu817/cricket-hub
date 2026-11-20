@@ -47,12 +47,10 @@ def bootstrap_admin() -> None:
         if not admins:
             db.add(AdminUser(email=email, password_hash=hash_password(password)))
         else:
-            admin = admins[0]
+            admin = next((existing for existing in admins if existing.email == email), admins[0])
             admin.email = email
             if not verify_password(password, admin.password_hash):
                 admin.password_hash = hash_password(password)
-            for duplicate in admins[1:]:
-                db.delete(duplicate)
         db.commit()
 
 

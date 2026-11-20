@@ -1,8 +1,14 @@
 from sqlalchemy import select
 
-from backend.app.database import SessionLocal
+from backend.app.database import SessionLocal, normalize_database_url
 from backend.app.models import AdminUser
 from backend.app.security import verify_password
+
+
+def test_postgres_urls_use_installed_psycopg_driver():
+    for scheme in ("postgres://", "postgresql://"):
+        normalized = normalize_database_url(f"{scheme}user:password@localhost/cricket_hub")
+        assert normalized.startswith("postgresql+psycopg://")
 
 
 MATCH = {

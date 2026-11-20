@@ -9,8 +9,16 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 load_dotenv()
 
+
+def normalize_database_url(value: str) -> str:
+    database_url = make_url(value)
+    if database_url.drivername in ("postgres", "postgresql"):
+        database_url = database_url.set(drivername="postgresql+psycopg")
+    return database_url.render_as_string(hide_password=False)
+
+
 if os.getenv("DATABASE_URL"):
-    DATABASE_URL = os.environ["DATABASE_URL"]
+    DATABASE_URL = normalize_database_url(os.environ["DATABASE_URL"])
 elif os.getenv("DB_HOST"):
     DATABASE_URL = URL.create(
         "postgresql+psycopg",
