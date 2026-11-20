@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   CalendarDays, ChevronDown, ChevronRight, CircleUserRound, LayoutDashboard,
@@ -6,13 +6,27 @@ import {
 } from 'lucide-react'
 
 type Status = 'Upcoming' | 'Completed'
-type BattingRow = { player: string; dismissal: string; runs: number; balls: number; fours: number; sixes: number }
-type BowlingRow = { player: string; overs: string; maidens: number; runs: number; wickets: number }
+type BattingRow = { player: string; playerId?: string | null; dismissal: string; runs: number; balls: number; fours: number; sixes: number }
+type BowlingRow = { player: string; playerId?: string | null; overs: string; maidens: number; runs: number; wickets: number }
 type Innings = { teamCode: string; total: string; overs: string; batting: BattingRow[]; bowling: BowlingRow[] }
 type Match = {
-  id: string; series: string; stage: string; status: Status; team1: string; team1Code: string
-  team2: string; team2Code: string; date: string; time: string; venue: string; format: string
+  id: string; series: string; seriesId?: string | null; stage: string; status: Status
+  team1: string; team1Code: string; team1Id?: string | null
+  team2: string; team2Code: string; team2Id?: string | null
+  date: string; time: string; venue: string; format: string
   result: string; toss: string; innings: Innings[]; commentary: string[]
+}
+type TeamMaster = { id: string; name: string; shortName: string; country: string | null; category: string | null; isActive: boolean; createdAt: string; updatedAt: string }
+type PlayerMaster = { id: string; fullName: string; displayName: string | null; playingRole: string; battingStyle: string | null; bowlingStyle: string | null; isActive: boolean; teamIds: string[]; createdAt: string; updatedAt: string }
+type SeriesMaster = { id: string; name: string; category: string | null; startDate: string | null; endDate: string | null; isActive: boolean; teamIds: string[]; createdAt: string; updatedAt: string }
+type MasterKind = 'teams' | 'players' | 'series'
+type MasterSection = 'matches' | MasterKind
+type MasterRecord = TeamMaster | PlayerMaster | SeriesMaster
+type SelectOption = { id: string; label: string; name?: string; shortName?: string; teamIds?: string[] }
+type MasterDraft = {
+  name: string; shortName: string; country: string; category: string
+  fullName: string; displayName: string; playingRole: string; battingStyle: string; bowlingStyle: string
+  startDate: string; endDate: string; isActive: boolean; teamIds: string[]
 }
 
 const emptyScore = (teamCode: string): Innings => ({ teamCode, total: '', overs: '', batting: [], bowling: [] })
@@ -48,6 +62,67 @@ const ordinal = (index: number) => {
 
 function TeamBadge({ code, small = false }: { code: string; small?: boolean }) {
   return <span className={small ? 'badge small' : 'badge'}>{(code || '?').slice(0, 3).toUpperCase()}</span>
+}
+
+function SearchableSelect({
+  label, value, options, placeholder, onChange, search, selectedOption, onSearchError,
+}: {
+  label: string
+  value: string
+  options: SelectOption[]
+  placeholder: string
+  onChange: (id: string, option: SelectOption) => void
+  search?: (query: string) => Promise<SelectOption[]>
+  selectedOption?: SelectOption
+  onSearchError?: (cause: unknown) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const [remoteOptions, setRemoteOptions] = useState<SelectOption[]>([])
+  const searchTimer = useRef<number | null>(null)
+  const allOptions = [...options, ...remoteOptions, ...(selectedOption ? [selectedOption] : [])]
+    .filter((option, index, items) => items.findIndex(item => item.id === option.id) === index)
+  const selected = allOptions.find(option => option.id === value)
+  const filtered = allOptions.filter(option => option.label.toLowerCase().includes(query.toLowerCase())).slice(0, 30)
+  useEffect(() => () => {
+    if (searchTimer.current !== null) window.clearTimeout(searchTimer.current)
+  }, [])
+  const updateQuery = (nextQuery: string) => {
+    setQuery(nextQuery)
+    setOpen(true)
+    if (searchTimer.current !== null) window.clearTimeout(searchTimer.current)
+    if (!nextQuery.trim() || !search) {
+      setRemoteOptions([])
+      return
+    }
+    searchTimer.current = window.setTimeout(() => {
+      void search(nextQuery.trim())
+        .then(setRemoteOptions)
+        .catch(cause => onSearchError?.(cause))
+    }, 200)
+  }
+  return <div className="searchable-field">
+    <label>{label}<input
+      role="combobox"
+      aria-expanded={open}
+      aria-autocomplete="list"
+      value={open ? query : selected?.label || ''}
+      placeholder={placeholder}
+      onFocus={() => { setOpen(true); setQuery('') }}
+      onBlur={() => setOpen(false)}
+      onChange={event => updateQuery(event.target.value)}
+    /></label>
+    {open && <div className="searchable-options" role="listbox">
+      {filtered.length ? filtered.map(option => <button
+        type="button"
+        role="option"
+        aria-selected={option.id === value}
+        key={option.id}
+        onMouseDown={event => event.preventDefault()}
+        onClick={() => { onChange(option.id, option); setQuery(''); setOpen(false) }}
+      >{option.label}</button>) : <span className="searchable-empty">No matching records</span>}
+    </div>}
+  </div>
 }
 
 function Header() {
@@ -155,22 +230,6 @@ function MatchesPage({ matches }: { matches: Match[] }) {
   </main>
 }
 
-function parseBattingRows(value: string): BattingRow[] {
-  return value.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
-    const [player = '', dismissal = '', runs = '', balls = '', fours = '', sixes = ''] = line.split('|').map(part => part.trim())
-    const values = [runs, balls, fours, sixes]
-    if (!player || !dismissal || values.some(value => !/^\d+$/.test(value))) throw new Error('Batting rows need a player, dismissal, and non-negative whole-number figures.')
-    return { player, dismissal, runs: Number(runs), balls: Number(balls), fours: Number(fours), sixes: Number(sixes) }
-  })
-}
-function parseBowlingRows(value: string): BowlingRow[] {
-  return value.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
-    const [player = '', overs = '', maidens = '', runs = '', wickets = ''] = line.split('|').map(part => part.trim())
-    if (!player || !/^\d+(\.\d)?$/.test(overs) || [maidens, runs, wickets].some(value => !/^\d+$/.test(value))) throw new Error('Bowling rows need a player, valid overs, and non-negative whole-number figures.')
-    return { player, overs, maidens: Number(maidens), runs: Number(runs), wickets: Number(wickets) }
-  })
-}
-
 function MatchDetail({ matches }: { matches: Match[] }) {
   const { id = '' } = useParams()
   const match = matches.find(item => item.id === id)
@@ -200,6 +259,234 @@ function MatchDetail({ matches }: { matches: Match[] }) {
   </main>
 }
 
+function emptyMasterDraft(): MasterDraft {
+  return {
+    name: '', shortName: '', country: '', category: '',
+    fullName: '', displayName: '', playingRole: 'Batter', battingStyle: '', bowlingStyle: '',
+    startDate: '', endDate: '', isActive: true, teamIds: [],
+  }
+}
+
+function masterDraftFrom(kind: MasterKind, record: MasterRecord): MasterDraft {
+  if (kind === 'teams') {
+    const team = record as TeamMaster
+    return { ...emptyMasterDraft(), name: team.name, shortName: team.shortName, country: team.country || '', category: team.category || '', isActive: team.isActive }
+  }
+  if (kind === 'players') {
+    const player = record as PlayerMaster
+    return {
+      ...emptyMasterDraft(), fullName: player.fullName, displayName: player.displayName || '',
+      playingRole: player.playingRole, battingStyle: player.battingStyle || '',
+      bowlingStyle: player.bowlingStyle || '', isActive: player.isActive, teamIds: player.teamIds,
+    }
+  }
+  const series = record as SeriesMaster
+  return {
+    ...emptyMasterDraft(), name: series.name, category: series.category || '',
+    startDate: series.startDate || '', endDate: series.endDate || '',
+    isActive: series.isActive, teamIds: series.teamIds,
+  }
+}
+
+function masterPayload(kind: MasterKind, draft: MasterDraft): Record<string, unknown> {
+  if (kind === 'teams') {
+    return {
+      name: draft.name, shortName: draft.shortName,
+      country: draft.country || null, category: draft.category || null, isActive: draft.isActive,
+    }
+  }
+  if (kind === 'players') {
+    return {
+      fullName: draft.fullName, displayName: draft.displayName || null,
+      playingRole: draft.playingRole, battingStyle: draft.battingStyle || null,
+      bowlingStyle: draft.bowlingStyle || null, isActive: draft.isActive, teamIds: draft.teamIds,
+    }
+  }
+  return {
+    name: draft.name, category: draft.category || null,
+    startDate: draft.startDate || null, endDate: draft.endDate || null,
+    isActive: draft.isActive, teamIds: draft.teamIds,
+  }
+}
+
+function MasterManagement({
+  kind, teams, hasMatchDraft, onReturnToMatch, onSave, onSaved,
+}: {
+  kind: MasterKind
+  teams: TeamMaster[]
+  hasMatchDraft: boolean
+  onReturnToMatch: () => void
+  onSave: (kind: MasterKind, id: string | null, payload: Record<string, unknown>) => Promise<void>
+  onSaved: () => Promise<void>
+}) {
+  const [items, setItems] = useState<MasterRecord[]>([])
+  const [query, setQuery] = useState('')
+  const [offset, setOffset] = useState(0)
+  const [hasNext, setHasNext] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<MasterDraft>(emptyMasterDraft)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [teamQuery, setTeamQuery] = useState('')
+  const [associationTeams, setAssociationTeams] = useState(teams)
+  const title = kind === 'teams' ? 'Teams' : kind === 'players' ? 'Players' : 'Series'
+
+  useEffect(() => {
+    let active = true
+    const params = new URLSearchParams({ limit: '51', offset: String(offset) })
+    if (query.trim()) params.set('q', query.trim())
+    setLoading(true)
+    setError('')
+    api<MasterRecord[]>(`/api/v1/admin/${kind}?${params.toString()}`)
+      .then(records => {
+        if (!active) return
+        setItems(records.slice(0, 50))
+        setHasNext(records.length > 50)
+      })
+      .catch(cause => {
+        if (active) setError(cause instanceof Error ? cause.message : `Could not load ${title.toLowerCase()}`)
+      })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [kind, offset, query, refreshKey, title])
+
+  useEffect(() => {
+    if (kind === 'teams' || !teamQuery.trim()) {
+      setAssociationTeams(teams)
+      return
+    }
+    let active = true
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ q: teamQuery.trim(), limit: '100', offset: '0' })
+      api<TeamMaster[]>(`/api/v1/admin/teams?${params.toString()}`)
+        .then(records => { if (active) setAssociationTeams(records) })
+        .catch(cause => {
+          if (active) setError(cause instanceof Error ? cause.message : 'Could not search teams')
+        })
+    }, 200)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [kind, teamQuery, teams])
+
+  const edit = (record: MasterRecord) => {
+    setEditingId(record.id)
+    setDraft(masterDraftFrom(kind, record))
+    setError('')
+    setNotice('')
+  }
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      await onSave(kind, editingId, masterPayload(kind, draft))
+      await onSaved()
+      setEditingId(null)
+      setDraft(emptyMasterDraft())
+      setRefreshKey(value => value + 1)
+      setNotice(`${title.slice(0, -1)} ${editingId ? 'updated' : 'added'}.`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Could not save ${title.toLowerCase()}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const toggleActive = async (record: MasterRecord) => {
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const current = masterDraftFrom(kind, record)
+      await onSave(kind, record.id, masterPayload(kind, { ...current, isActive: !record.isActive }))
+      await onSaved()
+      setRefreshKey(value => value + 1)
+      setNotice(`${title.slice(0, -1)} ${record.isActive ? 'deactivated' : 'reactivated'}.`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Could not update ${title.toLowerCase()}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const toggleTeam = (teamId: string) => setDraft(current => ({
+    ...current,
+    teamIds: current.teamIds.includes(teamId)
+      ? current.teamIds.filter(id => id !== teamId)
+      : [...current.teamIds, teamId],
+  }))
+
+  return <section className="master-management">
+    <div className="master-heading"><div><span className="eyebrow">MASTER DATA</span><h2>{title} management</h2><p className="muted-copy">Inactive records are retained for existing matches and scorecards.</p></div>
+      {hasMatchDraft && <button className="secondary-button" type="button" onClick={onReturnToMatch}>Return to match draft</button>}
+    </div>
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    {notice && <div className="notice" role="status">{notice}</div>}
+    <div className="master-layout">
+      <form className="match-form master-form" onSubmit={save}>
+        <div className="form-heading"><div><h3>{editingId ? `Edit ${title.slice(0, -1).toLowerCase()}` : `Add ${title.slice(0, -1).toLowerCase()}`}</h3><p>Save reusable records for match entry.</p></div></div>
+        <div className="form-grid">
+          {kind === 'teams' && <>
+            <label>Team name<input required maxLength={100} value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))}/></label>
+            <label>Short name / code<input required maxLength={10} value={draft.shortName} onChange={event => setDraft(current => ({ ...current, shortName: event.target.value.toUpperCase() }))}/></label>
+            <label>Country<input maxLength={100} value={draft.country} onChange={event => setDraft(current => ({ ...current, country: event.target.value }))}/></label>
+            <label>Category<input maxLength={60} value={draft.category} onChange={event => setDraft(current => ({ ...current, category: event.target.value }))} placeholder="National, franchise…"/></label>
+          </>}
+          {kind === 'players' && <>
+            <label>Full name<input required maxLength={120} value={draft.fullName} onChange={event => setDraft(current => ({ ...current, fullName: event.target.value }))}/></label>
+            <label>Display name<input maxLength={100} value={draft.displayName} onChange={event => setDraft(current => ({ ...current, displayName: event.target.value }))}/></label>
+            <label>Playing role<select value={draft.playingRole} onChange={event => setDraft(current => ({ ...current, playingRole: event.target.value }))}>
+              <option>Batter</option><option>Bowler</option><option>All-rounder</option><option>Wicketkeeper</option>
+            </select></label>
+            <label>Batting style<input maxLength={60} value={draft.battingStyle} onChange={event => setDraft(current => ({ ...current, battingStyle: event.target.value }))} placeholder="Right-hand bat…"/></label>
+            <label>Bowling style<input maxLength={80} value={draft.bowlingStyle} onChange={event => setDraft(current => ({ ...current, bowlingStyle: event.target.value }))} placeholder="Right-arm fast…"/></label>
+          </>}
+          {kind === 'series' && <>
+            <label>Series name<input required maxLength={160} value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))}/></label>
+            <label>Category<input maxLength={60} value={draft.category} onChange={event => setDraft(current => ({ ...current, category: event.target.value }))} placeholder="Bilateral, tournament…"/></label>
+            <label>Start date<input type="date" value={draft.startDate} onChange={event => setDraft(current => ({ ...current, startDate: event.target.value }))}/></label>
+            <label>End date<input type="date" value={draft.endDate} onChange={event => setDraft(current => ({ ...current, endDate: event.target.value }))}/></label>
+          </>}
+          {(kind === 'players' || kind === 'series') && <fieldset className="wide-field master-team-choices">
+            <legend>{kind === 'players' ? 'Team associations (multiple allowed)' : 'Participating teams'}</legend>
+            <label className="team-association-search">Search teams<input value={teamQuery} onChange={event => setTeamQuery(event.target.value)} placeholder="Search by team name or code"/></label>
+            {associationTeams.length ? associationTeams.map(team => <label key={team.id}>
+              <input type="checkbox" checked={draft.teamIds.includes(team.id)} disabled={!team.isActive && !draft.teamIds.includes(team.id)} onChange={() => toggleTeam(team.id)}/>
+              {team.name} ({team.shortName}){!team.isActive && ' · Inactive'}
+            </label>) : <p className="muted-copy">{teamQuery ? 'No matching teams.' : 'Add an active team before assigning one here.'}</p>}
+            {draft.teamIds.some(id => !associationTeams.some(team => team.id === id)) && <p className="muted-copy">Some selected teams are outside these results; search by name or code to review them.</p>}
+          </fieldset>}
+          {editingId && <label className="wide-field active-toggle"><input type="checkbox" checked={draft.isActive} onChange={event => setDraft(current => ({ ...current, isActive: event.target.checked }))}/> Active</label>}
+        </div>
+        <div className="form-actions">
+          {editingId && <button className="secondary-button" type="button" onClick={() => { setEditingId(null); setDraft(emptyMasterDraft()) }}>Cancel edit</button>}
+          <button className="primary-button" disabled={busy}>{busy ? 'Saving…' : editingId ? 'Save changes' : `Add ${title.slice(0, -1).toLowerCase()}`}</button>
+        </div>
+      </form>
+      <div className="master-records">
+        <label className="master-search">Search {title.toLowerCase()}<input value={query} onChange={event => { setQuery(event.target.value); setOffset(0) }} placeholder={`Search ${title.toLowerCase()}`}/></label>
+        {loading ? <div className="loading-state">Loading {title.toLowerCase()}…</div> : items.length ? items.map(record => {
+          const recordTitle = 'fullName' in record ? record.fullName : record.name
+          const summary = 'shortName' in record
+            ? `${record.shortName}${record.country ? ` · ${record.country}` : ''}`
+            : 'playingRole' in record
+              ? `${record.displayName || record.fullName} · ${record.playingRole}`
+              : `${record.category || 'Series'} · ${record.teamIds.length} participating team(s)`
+          return <div className="master-record" key={record.id}>
+            <div><strong>{recordTitle}</strong><small>{summary}</small><span className={`status ${record.isActive ? 'upcoming' : 'completed'}`}>{record.isActive ? 'Active' : 'Inactive'}</span></div>
+            <div className="row-actions"><button type="button" onClick={() => edit(record)}>Edit</button><button type="button" disabled={busy} onClick={() => void toggleActive(record)}>{record.isActive ? 'Deactivate' : 'Activate'}</button></div>
+          </div>
+        }) : <div className="empty-inline">No {title.toLowerCase()} found.</div>}
+        <div className="master-pagination"><button className="secondary-button" disabled={offset === 0 || loading} onClick={() => setOffset(value => Math.max(0, value - 50))}>Previous</button><button className="secondary-button" disabled={!hasNext || loading} onClick={() => setOffset(value => value + 50)}>Next</button></div>
+      </div>
+    </div>
+  </section>
+}
+
 function Admin({ matches, onRefresh }: { matches: Match[]; onRefresh: () => Promise<void> }) {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null)
   const [email, setEmail] = useState('')
@@ -208,12 +495,34 @@ function Admin({ matches, onRefresh }: { matches: Match[]; onRefresh: () => Prom
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState<Match | null>(null)
   const [notice, setNotice] = useState('')
+  const [section, setSection] = useState<MasterSection>('matches')
+  const [teams, setTeams] = useState<TeamMaster[]>([])
+  const [players, setPlayers] = useState<PlayerMaster[]>([])
+  const [series, setSeries] = useState<SeriesMaster[]>([])
+  const [masterError, setMasterError] = useState('')
+
+  const loadMasterChoices = async () => {
+    const [teamData, playerData, seriesData] = await Promise.all([
+      api<TeamMaster[]>('/api/v1/admin/teams?limit=100&offset=0'),
+      api<PlayerMaster[]>('/api/v1/admin/players?limit=100&offset=0'),
+      api<SeriesMaster[]>('/api/v1/admin/series?limit=100&offset=0'),
+    ])
+    setTeams(teamData)
+    setPlayers(playerData)
+    setSeries(seriesData)
+    setMasterError('')
+  }
 
   useEffect(() => {
     api<{ authenticated: boolean }>('/api/v1/auth/session')
       .then(session => setAuthenticated(session.authenticated))
       .catch(() => setAuthenticated(false))
   }, [])
+  useEffect(() => {
+    if (authenticated) {
+      loadMasterChoices().catch(cause => setMasterError(cause instanceof Error ? cause.message : 'Could not load master data'))
+    }
+  }, [authenticated])
   const login = async (event: FormEvent) => {
     event.preventDefault(); setError(''); setBusy(true)
     try { await api('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }); setAuthenticated(true) }
@@ -223,6 +532,10 @@ function Admin({ matches, onRefresh }: { matches: Match[]; onRefresh: () => Prom
   const logout = async () => {
     try { await api('/api/v1/auth/logout', { method: 'POST', body: '{}' }); setAuthenticated(false); setEditing(null) }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Sign-out failed') }
+  }
+  const saveMaster = async (kind: MasterKind, id: string | null, payload: Record<string, unknown>) => {
+    const endpoint = `/api/v1/admin/${kind}${id ? `/${id}` : ''}`
+    await api(endpoint, { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) })
   }
   const remove = async (match: Match) => {
     if (!window.confirm(`Delete ${match.stage}: ${match.team1} vs ${match.team2}?`)) return
@@ -238,21 +551,59 @@ function Admin({ matches, onRefresh }: { matches: Match[]; onRefresh: () => Prom
     <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Password"/></label>
     <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
   </form></main>
-  return <main className="admin-page"><aside className="admin-side"><div className="admin-brand"><ShieldCheck size={20}/><b>Cricket Hub Admin</b></div><button className="active"><LayoutDashboard size={17}/> Match management</button><button onClick={logout}><LogOut size={17}/> Sign out</button></aside>
-    <section className="admin-main"><div className="admin-title"><div><span className="eyebrow">ADMINISTRATION</span><h1>Match management</h1><p className="muted-copy">Changes are saved on this server and shown on public pages.</p></div><button className="primary-button" onClick={() => { setError(''); setEditing(newMatch()) }}>+ Add match</button></div>
-      {error && <div className="error-banner" role="alert">{error}</div>}{notice && <div className="notice" role="status">{notice}</div>}
-      {editing && <MatchForm match={editing} onCancel={() => setEditing(null)} onSave={async match => {
-        setBusy(true); setError(''); setNotice('')
-        try {
-          const exists = matches.some(item => item.id === match.id)
-          await api(exists ? `/api/v1/matches/${match.id}` : '/api/v1/matches', { method: exists ? 'PUT' : 'POST', body: JSON.stringify(match) })
-          await onRefresh(); setEditing(null); setNotice(exists ? 'Match changes saved.' : 'Match added.')
-        } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not save match') }
-        finally { setBusy(false) }
-      }} busy={busy}/>}
-      <div className="admin-table"><div className="admin-table-head"><b>Match</b><b>Status</b><b>Actions</b></div>
-        {matches.length ? matches.map(match => <div className="admin-table-row" key={match.id}><div><TeamBadge code={match.team1Code} small/><b>{match.team1Code}</b><span>vs</span><b>{match.team2Code}</b><small>{match.stage} · {formatDate(match.date)}</small></div><span className={`status ${match.status.toLowerCase()}`}>{match.status}</span><div className="row-actions"><button onClick={() => { setError(''); setEditing(match) }}>Edit</button><button className="danger-button" onClick={() => void remove(match)}>Delete</button></div></div>) : <div className="empty-inline">No matches yet. Use “Add match” to publish the first one.</div>}
+  const sectionTitles: Record<MasterSection, string> = { matches: 'Match management', teams: 'Teams management', players: 'Players management', series: 'Series management' }
+  return <main className="admin-page"><aside className="admin-side"><div className="admin-brand"><ShieldCheck size={20}/><b>Cricket Hub Admin</b></div>
+    <button className={section === 'matches' ? 'active' : ''} onClick={() => setSection('matches')}><LayoutDashboard size={17}/> Match management</button>
+    <button className={section === 'teams' ? 'active' : ''} onClick={() => setSection('teams')}><ShieldCheck size={17}/> Teams</button>
+    <button className={section === 'players' ? 'active' : ''} onClick={() => setSection('players')}><CircleUserRound size={17}/> Players</button>
+    <button className={section === 'series' ? 'active' : ''} onClick={() => setSection('series')}><Trophy size={17}/> Series</button>
+    <button onClick={logout}><LogOut size={17}/> Sign out</button>
+  </aside>
+    <section className="admin-main">
+      <div className="admin-title"><div><span className="eyebrow">ADMINISTRATION</span><h1>{sectionTitles[section]}</h1><p className="muted-copy">Changes are saved on this server and shown on public pages.</p></div>
+        {section === 'matches' && <button className="primary-button" onClick={() => { setError(''); setEditing(newMatch()) }}>+ Add match</button>}
       </div>
+      <div className="admin-tabs" role="tablist" aria-label="Admin sections">
+        {(['matches', 'teams', 'players', 'series'] as MasterSection[]).map(item => <button
+          type="button" role="tab" aria-selected={section === item} key={item}
+          className={section === item ? 'active' : ''} onClick={() => setSection(item)}
+        >{sectionTitles[item]}</button>)}
+      </div>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {notice && <div className="notice" role="status">{notice}</div>}
+      {masterError && <div className="error-banner" role="alert">{masterError}</div>}
+      <div hidden={section !== 'matches'}>
+        {editing && <MatchForm
+          match={editing}
+          teams={teams}
+          players={players}
+          series={series}
+          onManage={setSection}
+          onSearchError={cause => setMasterError(cause instanceof Error ? cause.message : 'Could not search master data')}
+          onCancel={() => setEditing(null)}
+          onSave={async match => {
+            setBusy(true); setError(''); setNotice('')
+            try {
+              const exists = matches.some(item => item.id === match.id)
+              await api(exists ? `/api/v1/matches/${match.id}` : '/api/v1/matches', { method: exists ? 'PUT' : 'POST', body: JSON.stringify(match) })
+              await onRefresh(); setEditing(null); setNotice(exists ? 'Match changes saved.' : 'Match added.')
+            } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not save match') }
+            finally { setBusy(false) }
+          }}
+          busy={busy}
+        />}
+        <div className="admin-table"><div className="admin-table-head"><b>Match</b><b>Status</b><b>Actions</b></div>
+          {matches.length ? matches.map(match => <div className="admin-table-row" key={match.id}><div><TeamBadge code={match.team1Code} small/><b>{match.team1Code}</b><span>vs</span><b>{match.team2Code}</b><small>{match.stage} · {formatDate(match.date)}</small></div><span className={`status ${match.status.toLowerCase()}`}>{match.status}</span><div className="row-actions"><button onClick={() => { setError(''); setEditing(match) }}>Edit</button><button className="danger-button" onClick={() => void remove(match)}>Delete</button></div></div>) : <div className="empty-inline">No matches yet. Use “Add match” to publish the first one.</div>}
+        </div>
+      </div>
+      {section !== 'matches' && <MasterManagement
+        kind={section}
+        teams={teams}
+        hasMatchDraft={editing !== null}
+        onReturnToMatch={() => setSection('matches')}
+        onSave={saveMaster}
+        onSaved={loadMasterChoices}
+      />}
     </section>
   </main>
 }
@@ -260,22 +611,91 @@ function Admin({ matches, onRefresh }: { matches: Match[]; onRefresh: () => Prom
 function newMatch(): Match {
   return { id: '', series: '', stage: '', status: 'Upcoming', team1: '', team1Code: '', team2: '', team2Code: '', date: today(), time: '', venue: '', format: 'ODI', result: '', toss: '', innings: [], commentary: [] }
 }
-function MatchForm({ match, onCancel, onSave, busy }: { match: Match; onCancel: () => void; onSave: (match: Match) => Promise<void>; busy: boolean }) {
+function MatchForm({
+  match, teams, players, series, onManage, onSearchError, onCancel, onSave, busy,
+}: {
+  match: Match
+  teams: TeamMaster[]
+  players: PlayerMaster[]
+  series: SeriesMaster[]
+  onManage: (section: MasterSection) => void
+  onSearchError: (cause: unknown) => void
+  onCancel: () => void
+  onSave: (match: Match) => Promise<void>
+  busy: boolean
+}) {
   const [form, setForm] = useState<Match>(() => structuredClone(match))
-  const [batting, setBatting] = useState(() => [0, 1, 2, 3].map(index => (match.innings[index]?.batting || []).map(row => `${row.player} | ${row.dismissal} | ${row.runs} | ${row.balls} | ${row.fours} | ${row.sixes}`).join('\n')))
-  const [bowling, setBowling] = useState(() => [0, 1, 2, 3].map(index => (match.innings[index]?.bowling || []).map(row => `${row.player} | ${row.overs} | ${row.maidens} | ${row.runs} | ${row.wickets}`).join('\n')))
   const [formError, setFormError] = useState('')
   const set = (key: keyof Match, value: string) => setForm(current => ({ ...current, [key]: value }))
+  const selectedSeries = series.find(item => item.id === form.seriesId)
+  const [selectedSeriesTeamIds, setSelectedSeriesTeamIds] = useState<string[] | null>(null)
+  const participatingIds = selectedSeries?.teamIds || selectedSeriesTeamIds || []
+  const allowedTeam = (team: TeamMaster) => (
+    team.isActive || team.id === form.team1Id || team.id === form.team2Id
+  ) && (!participatingIds.length || participatingIds.includes(team.id) || team.id === form.team1Id || team.id === form.team2Id)
+  const team1Options = teams.filter(team => allowedTeam(team) && team.id !== form.team2Id)
+  const team2Options = teams.filter(team => allowedTeam(team) && team.id !== form.team1Id)
+  const seriesOptions = series.filter(item => item.isActive || item.id === form.seriesId)
+  const seriesSelectOptions = seriesOptions.map(item => ({ id: item.id, label: item.name, name: item.name, teamIds: item.teamIds }))
+  const teamOptions = (items: TeamMaster[]) => items.map(item => ({ id: item.id, label: `${item.name} (${item.shortName})`, name: item.name, shortName: item.shortName }))
+  const playerOptionsFor = (teamId: string | null | undefined, keepId?: string | null) => players
+    .filter(player => (player.isActive && !!teamId && player.teamIds.includes(teamId)) || player.id === keepId)
+    .map(player => ({
+      id: player.id,
+      label: `${player.displayName || player.fullName}${player.displayName && player.displayName !== player.fullName ? ` (${player.fullName})` : ''}${player.teamIds.length ? ` · ${player.teamIds.map(id => teams.find(team => team.id === id)?.shortName).filter(Boolean).join(', ')}` : ''}`,
+      name: player.displayName || player.fullName,
+    }))
+  const searchMasters = async (kind: MasterKind, query: string, teamId?: string | null) => {
+    const params = new URLSearchParams({ q: query, limit: '100', offset: '0', active_only: 'true' })
+    if (kind === 'players' && teamId) params.set('team_id', teamId)
+    const records = await api<MasterRecord[]>(`/api/v1/admin/${kind}?${params.toString()}`)
+    if (kind === 'series') return (records as SeriesMaster[]).map(item => ({ id: item.id, label: item.name, name: item.name, teamIds: item.teamIds }))
+    if (kind === 'teams') return (records as TeamMaster[]).filter(allowedTeam).map(item => ({ id: item.id, label: `${item.name} (${item.shortName})`, name: item.name, shortName: item.shortName }))
+    return (records as PlayerMaster[]).map(item => ({
+      id: item.id,
+      label: `${item.displayName || item.fullName}${item.displayName && item.displayName !== item.fullName ? ` (${item.fullName})` : ''} · ${item.playingRole}`,
+      name: item.displayName || item.fullName,
+    }))
+  }
+  const updateInnings = (index: number, update: (innings: Innings) => Innings) => {
+    const teamCode = index % 2 === 0 ? form.team1Code : form.team2Code
+    setForm(current => {
+      const innings = [...current.innings]
+      innings[index] = update({ ...emptyScore(teamCode), ...innings[index], teamCode })
+      return { ...current, innings }
+    })
+  }
+  const selectPlayer = (inningIndex: number, type: 'batting' | 'bowling', rowIndex: number, playerId: string, playerName: string) => {
+    const player = players.find(item => item.id === playerId)
+    updateInnings(inningIndex, innings => ({
+      ...innings,
+      [type]: innings[type].map((row, index) => index === rowIndex
+        ? { ...row, playerId: playerId || undefined, player: player ? player.displayName || player.fullName : playerName || row.player }
+        : row),
+    }))
+  }
   const save = (event: FormEvent) => {
     event.preventDefault()
     setFormError('')
     try {
+      if (!form.seriesId || !form.team1Id || !form.team2Id) {
+        throw new Error('Select a registered series and two different registered teams before saving.')
+      }
+      if (form.team1Id === form.team2Id) throw new Error('Choose two different teams.')
       const inningsCount = form.format.toLowerCase().includes('test') ? 4 : 2
       const innings = form.status === 'Upcoming' ? [] : Array.from({ length: inningsCount }, (_, index) => ({
         teamCode: index % 2 === 0 ? form.team1Code : form.team2Code,
         total: form.innings[index]?.total || '', overs: form.innings[index]?.overs || '',
-        batting: parseBattingRows(batting[index] || ''), bowling: parseBowlingRows(bowling[index] || ''),
+        batting: form.innings[index]?.batting || [], bowling: form.innings[index]?.bowling || [],
       })).filter(item => item.total || item.batting.length || item.bowling.length)
+      for (const inning of innings) {
+        if (inning.batting.some(row => !row.player.trim() || !row.dismissal.trim())) {
+          throw new Error('Every batting row needs a player name and dismissal.')
+        }
+        if (inning.bowling.some(row => !row.player.trim() || !/^\d+(\.\d)?$/.test(row.overs))) {
+          throw new Error('Every bowling row needs a player name and valid overs.')
+        }
+      }
       void onSave({ ...form, innings, commentary: form.commentary.filter(line => line.trim()) })
     } catch (cause) {
       setFormError(cause instanceof Error ? cause.message : 'Scorecard entries are invalid.')
@@ -286,27 +706,63 @@ function MatchForm({ match, onCancel, onSave, busy }: { match: Match; onCancel: 
   return <form className="match-form" onSubmit={save}>
     <div className="form-heading"><div><h2>{match.id ? 'Edit match' : 'Add match'}</h2><p>Only saved information is published. Do not enter unverified scores.</p></div><button type="button" className="icon-close" onClick={onCancel} aria-label="Close form"><X size={19}/></button></div>
     {formError && <p className="form-error" role="alert">{formError}</p>}
+    {match.id && (!match.seriesId || !match.team1Id || !match.team2Id) && <p className="legacy-link-note">This match uses preserved text snapshots. Choose registered records to link it when saving; historical records are not linked automatically.</p>}
     <div className="form-grid">
-      <label>Series<input required maxLength={160} value={form.series} onChange={e => set('series', e.target.value)}/></label>
+      <div className="master-select-row"><SearchableSelect label="Series" value={form.seriesId || ''} options={seriesSelectOptions} selectedOption={form.seriesId ? { id: form.seriesId, label: form.series, name: form.series } : undefined} search={query => searchMasters('series', query)} onSearchError={onSearchError} placeholder="Search active series" onChange={(id, option) => {
+        const selected = series.find(item => item.id === id)
+        setSelectedSeriesTeamIds(selected?.teamIds || option.teamIds || [])
+        setForm(current => ({ ...current, seriesId: id, series: selected?.name || option.name || current.series }))
+      }}/><button type="button" className="secondary-button" onClick={() => onManage('series')}>Manage series</button></div>
       <label>Match / stage<input required maxLength={160} value={form.stage} onChange={e => set('stage', e.target.value)} placeholder="e.g. 1st ODI"/></label>
       <label>Status<select value={form.status} onChange={e => set('status', e.target.value)}><option>Upcoming</option><option>Completed</option></select></label>
       <label>Format<input required maxLength={40} value={form.format} onChange={e => set('format', e.target.value)} placeholder="ODI, Test, T20I…"/></label>
-      <label>Team 1<input required maxLength={100} value={form.team1} onChange={e => set('team1', e.target.value)}/></label>
-      <label>Team 1 code<input required maxLength={10} value={form.team1Code} onChange={e => set('team1Code', e.target.value.toUpperCase())}/></label>
-      <label>Team 2<input required maxLength={100} value={form.team2} onChange={e => set('team2', e.target.value)}/></label>
-      <label>Team 2 code<input required maxLength={10} value={form.team2Code} onChange={e => set('team2Code', e.target.value.toUpperCase())}/></label>
+      <div className="master-select-row"><SearchableSelect label="Team 1" value={form.team1Id || ''} options={teamOptions(team1Options)} selectedOption={form.team1Id ? { id: form.team1Id, label: `${form.team1} (${form.team1Code})`, name: form.team1, shortName: form.team1Code } : undefined} search={query => searchMasters('teams', query).then(items => items.filter(item => item.id !== form.team2Id))} onSearchError={onSearchError} placeholder="Search registered teams" onChange={(id, option) => {
+        const selected = teams.find(team => team.id === id)
+        const fromSearch = team1Options.find(team => team.id === id)
+        const team = selected || fromSearch
+        setForm(current => ({ ...current, team1Id: id, team1: team?.name || option.name || current.team1, team1Code: team?.shortName || option.shortName || current.team1Code }))
+      }}/><button type="button" className="secondary-button" onClick={() => onManage('teams')}>Manage teams</button></div>
+      <div className="master-select-row"><SearchableSelect label="Team 2" value={form.team2Id || ''} options={teamOptions(team2Options)} selectedOption={form.team2Id ? { id: form.team2Id, label: `${form.team2} (${form.team2Code})`, name: form.team2, shortName: form.team2Code } : undefined} search={query => searchMasters('teams', query).then(items => items.filter(item => item.id !== form.team1Id))} onSearchError={onSearchError} placeholder="Search registered teams" onChange={(id, option) => {
+        const selected = teams.find(team => team.id === id)
+        const fromSearch = team2Options.find(team => team.id === id)
+        const team = selected || fromSearch
+        setForm(current => ({ ...current, team2Id: id, team2: team?.name || option.name || current.team2, team2Code: team?.shortName || option.shortName || current.team2Code }))
+      }}/><button type="button" className="secondary-button" onClick={() => onManage('teams')}>Manage teams</button></div>
       <label>Date<input required type="date" value={form.date} onChange={e => set('date', e.target.value)}/></label>
       <label>Start time<input required value={form.time} onChange={e => set('time', e.target.value)} placeholder="Local venue time"/></label>
       <label className="wide-field">Venue<input required maxLength={160} value={form.venue} onChange={e => set('venue', e.target.value)}/></label>
       <label className="wide-field">Toss details<input value={form.toss} onChange={e => set('toss', e.target.value)} placeholder="Optional"/></label>
       {form.status === 'Completed' && <label className="wide-field">Result<input value={form.result} onChange={e => set('result', e.target.value)} placeholder="Optional result text"/></label>}
     </div>
-    {form.status === 'Completed' && <div className="score-input-section"><h3>Scorecard (optional)</h3><p>One batter/bowler per line. Use the field order shown in the hints.</p>
+    {form.status === 'Completed' && <div className="score-input-section"><h3>Scorecard (optional)</h3><p>Use registered players where available. Existing text snapshots remain editable.</p>
       {inningsCodes.map((code, index) => <fieldset className="innings-editor" key={index}><legend>{code} innings {index + 1}</legend>
-        <div className="form-grid"><label>Total<input value={form.innings[index]?.total || ''} onChange={e => setForm(current => { const innings = [...current.innings]; innings[index] = { ...emptyScore(index === 0 ? current.team1Code : current.team2Code), ...innings[index], teamCode: index === 0 ? current.team1Code : current.team2Code, total: e.target.value }; return { ...current, innings } })} placeholder="e.g. 245/7"/></label>
-        <label>Overs<input value={form.innings[index]?.overs || ''} onChange={e => setForm(current => { const innings = [...current.innings]; innings[index] = { ...emptyScore(index === 0 ? current.team1Code : current.team2Code), ...innings[index], teamCode: index === 0 ? current.team1Code : current.team2Code, overs: e.target.value }; return { ...current, innings } })} placeholder="e.g. 50"/></label></div>
-        <label>Batting entries<textarea value={batting[index] || ''} onChange={e => setBatting(current => current.map((value, i) => i === index ? e.target.value : value))} placeholder={'Player | dismissal | runs | balls | fours | sixes'}/></label>
-        <label>Bowling entries<textarea value={bowling[index] || ''} onChange={e => setBowling(current => current.map((value, i) => i === index ? e.target.value : value))} placeholder={'Bowler | overs | maidens | runs | wickets'}/></label>
+        <div className="form-grid"><label>Total<input value={form.innings[index]?.total || ''} onChange={event => updateInnings(index, innings => ({ ...innings, total: event.target.value }))} placeholder="e.g. 245/7"/></label>
+        <label>Overs<input value={form.innings[index]?.overs || ''} onChange={event => updateInnings(index, innings => ({ ...innings, overs: event.target.value }))} placeholder="e.g. 50"/></label></div>
+        <div className="score-entry-group"><h4>Batting entries</h4>
+          {(form.innings[index]?.batting || []).map((row, rowIndex) => <div className="score-entry-row" key={`bat-${index}-${rowIndex}`}>
+            <SearchableSelect label="Registered player" value={row.playerId || ''} options={playerOptionsFor(index % 2 === 0 ? form.team1Id : form.team2Id, row.playerId)} selectedOption={row.playerId ? { id: row.playerId, label: row.player, name: row.player } : undefined} search={query => searchMasters('players', query, index % 2 === 0 ? form.team1Id : form.team2Id)} onSearchError={onSearchError} placeholder="Search players on this team" onChange={(id, option) => selectPlayer(index, 'batting', rowIndex, id, option.name || '')}/>
+            {!row.playerId && <label>Player name<input maxLength={100} value={row.player} onChange={event => updateInnings(index, innings => ({ ...innings, batting: innings.batting.map((item, i) => i === rowIndex ? { ...item, player: event.target.value } : item) }))}/></label>}
+            <label>Dismissal<input maxLength={150} value={row.dismissal} onChange={event => updateInnings(index, innings => ({ ...innings, batting: innings.batting.map((item, i) => i === rowIndex ? { ...item, dismissal: event.target.value } : item) }))}/></label>
+            <label>Runs<input type="number" min="0" value={row.runs} onChange={event => updateInnings(index, innings => ({ ...innings, batting: innings.batting.map((item, i) => i === rowIndex ? { ...item, runs: Number(event.target.value) } : item) }))}/></label>
+            <label>Balls<input type="number" min="0" value={row.balls} onChange={event => updateInnings(index, innings => ({ ...innings, batting: innings.batting.map((item, i) => i === rowIndex ? { ...item, balls: Number(event.target.value) } : item) }))}/></label>
+            <label>4s<input type="number" min="0" value={row.fours} onChange={event => updateInnings(index, innings => ({ ...innings, batting: innings.batting.map((item, i) => i === rowIndex ? { ...item, fours: Number(event.target.value) } : item) }))}/></label>
+            <label>6s<input type="number" min="0" value={row.sixes} onChange={event => updateInnings(index, innings => ({ ...innings, batting: innings.batting.map((item, i) => i === rowIndex ? { ...item, sixes: Number(event.target.value) } : item) }))}/></label>
+            <button type="button" className="danger-button" onClick={() => updateInnings(index, innings => ({ ...innings, batting: innings.batting.filter((_, i) => i !== rowIndex) }))}>Remove</button>
+          </div>)}
+          <button type="button" className="secondary-button" onClick={() => updateInnings(index, innings => ({ ...innings, batting: [...innings.batting, { player: '', dismissal: 'not out', runs: 0, balls: 0, fours: 0, sixes: 0 }] }))}>Add batter</button>
+        </div>
+        <div className="score-entry-group"><h4>Bowling entries</h4>
+          {(form.innings[index]?.bowling || []).map((row, rowIndex) => <div className="score-entry-row" key={`bowl-${index}-${rowIndex}`}>
+            <SearchableSelect label="Registered player" value={row.playerId || ''} options={playerOptionsFor(index % 2 === 0 ? form.team1Id : form.team2Id, row.playerId)} selectedOption={row.playerId ? { id: row.playerId, label: row.player, name: row.player } : undefined} search={query => searchMasters('players', query, index % 2 === 0 ? form.team1Id : form.team2Id)} onSearchError={onSearchError} placeholder="Search players on this team" onChange={(id, option) => selectPlayer(index, 'bowling', rowIndex, id, option.name || '')}/>
+            {!row.playerId && <label>Player name<input maxLength={100} value={row.player} onChange={event => updateInnings(index, innings => ({ ...innings, bowling: innings.bowling.map((item, i) => i === rowIndex ? { ...item, player: event.target.value } : item) }))}/></label>}
+            <label>Overs<input value={row.overs} onChange={event => updateInnings(index, innings => ({ ...innings, bowling: innings.bowling.map((item, i) => i === rowIndex ? { ...item, overs: event.target.value } : item) }))}/></label>
+            <label>Maidens<input type="number" min="0" value={row.maidens} onChange={event => updateInnings(index, innings => ({ ...innings, bowling: innings.bowling.map((item, i) => i === rowIndex ? { ...item, maidens: Number(event.target.value) } : item) }))}/></label>
+            <label>Runs<input type="number" min="0" value={row.runs} onChange={event => updateInnings(index, innings => ({ ...innings, bowling: innings.bowling.map((item, i) => i === rowIndex ? { ...item, runs: Number(event.target.value) } : item) }))}/></label>
+            <label>Wickets<input type="number" min="0" value={row.wickets} onChange={event => updateInnings(index, innings => ({ ...innings, bowling: innings.bowling.map((item, i) => i === rowIndex ? { ...item, wickets: Number(event.target.value) } : item) }))}/></label>
+            <button type="button" className="danger-button" onClick={() => updateInnings(index, innings => ({ ...innings, bowling: innings.bowling.filter((_, i) => i !== rowIndex) }))}>Remove</button>
+          </div>)}
+          <button type="button" className="secondary-button" onClick={() => updateInnings(index, innings => ({ ...innings, bowling: [...innings.bowling, { player: '', overs: '0', maidens: 0, runs: 0, wickets: 0 }] }))}>Add bowler</button>
+        </div>
       </fieldset>)}
       <label className="wide-field">Commentary (optional, one entry per line)<textarea value={form.commentary.join('\n')} onChange={e => setForm(current => ({ ...current, commentary: e.target.value.split('\n') }))}/></label>
     </div>}

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
@@ -8,12 +8,91 @@ from typing_extensions import Annotated
 
 TeamCode = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10)]
 TextEntry = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+PlayingRole = Literal["Batter", "Bowler", "All-rounder", "Wicketkeeper"]
+
+
+class TeamInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", alias_generator=to_camel, populate_by_name=True)
+
+    name: TextEntry
+    short_name: TeamCode
+    country: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] | None = None
+    category: Annotated[str, StringConstraints(strip_whitespace=True, max_length=60)] | None = None
+    is_active: bool = True
+
+
+class TeamOut(TeamInput):
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class SeriesInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", alias_generator=to_camel, populate_by_name=True)
+
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+    category: Annotated[str, StringConstraints(strip_whitespace=True, max_length=60)] | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    is_active: bool = True
+    team_ids: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("team_ids")
+    @classmethod
+    def unique_team_ids(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError("A team can only be listed once in a series")
+        return value
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("Series end date cannot be before its start date")
+        return self
+
+
+class SeriesOut(SeriesInput):
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlayerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", alias_generator=to_camel, populate_by_name=True)
+
+    full_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
+    display_name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] | None = None
+    playing_role: PlayingRole = "Batter"
+    batting_style: Annotated[str, StringConstraints(strip_whitespace=True, max_length=60)] | None = None
+    bowling_style: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] | None = None
+    is_active: bool = True
+    team_ids: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("team_ids")
+    @classmethod
+    def unique_team_ids(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError("A team can only be associated with a player once")
+        return value
+
+
+class PlayerOut(PlayerInput):
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
 
 
 class BattingEntryInput(BaseModel):
     model_config = ConfigDict(extra="forbid", alias_generator=to_camel, populate_by_name=True)
 
     player: TextEntry
+    player_id: str | None = None
     dismissal: Annotated[str, StringConstraints(max_length=150)]
     runs: int = Field(ge=0)
     balls: int = Field(ge=0)
@@ -25,6 +104,7 @@ class BowlingEntryInput(BaseModel):
     model_config = ConfigDict(extra="forbid", alias_generator=to_camel, populate_by_name=True)
 
     player: TextEntry
+    player_id: str | None = None
     overs: Annotated[str, StringConstraints(pattern=r"^\d+(\.\d)?$", max_length=40)]
     maidens: int = Field(ge=0)
     runs: int = Field(ge=0)
@@ -45,11 +125,14 @@ class MatchInput(BaseModel):
     model_config = ConfigDict(extra="forbid", alias_generator=to_camel, populate_by_name=True)
 
     id: str | None = None
+    series_id: str | None = None
     series: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
     stage: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
     status: Literal["Upcoming", "Completed"]
+    team1_id: str | None = None
     team1: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
     team1_code: TeamCode
+    team2_id: str | None = None
     team2: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
     team2_code: TeamCode
     date: date
@@ -65,6 +148,8 @@ class MatchInput(BaseModel):
     def validate_match_details(self):
         if self.team1_code == self.team2_code:
             raise ValueError("A match must have two different teams")
+        if self.team1_id and self.team1_id == self.team2_id:
+            raise ValueError("A match must use two different registered teams")
         if any(innings.team_code not in (self.team1_code, self.team2_code) for innings in self.innings):
             raise ValueError("Each innings team must be one of the match teams")
         return self
@@ -99,11 +184,14 @@ class MatchOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
 
     id: str
+    series_id: str | None = None
     series: str
     stage: str
     status: str
+    team1_id: str | None = None
     team1: str
     team1_code: str
+    team2_id: str | None = None
     team2: str
     team2_code: str
     date: date

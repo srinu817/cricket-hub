@@ -72,6 +72,9 @@ Do not omit `DATABASE_URL` on Render: without it, the app falls back to local SQ
 - `POST /api/v1/auth/login`, `GET /api/v1/auth/session`, and `POST /api/v1/auth/logout` handle admin sessions.
 - `POST`, `PUT`, and `DELETE /api/v1/matches[/{id}]` require an admin session.
 - Match scorecards support up to four innings, batting and bowling figures, and commentary.
+- Admin master-data endpoints require an admin session: `GET`/`POST /api/v1/admin/teams`, `GET`/`POST /api/v1/admin/players`, and `GET`/`POST /api/v1/admin/series`, with `PUT /api/v1/admin/{teams|players|series}/{id}` for updates. List endpoints support `q`, `limit`, and `offset`.
+- Manage teams, players, and series from the admin navigation, then select those records in the match editor. Use `isActive` to deactivate a master instead of deleting it. Existing match and scorecard text remains the public snapshot; historical text is not automatically linked to new masters.
+- The additive master-data schema migration is `d3a9c1e7f421_add_reusable_master_data.py`. The Render start command above runs `python -m alembic upgrade head` before starting FastAPI.
 
 ## Tests and checks
 
