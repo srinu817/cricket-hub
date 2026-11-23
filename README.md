@@ -66,6 +66,20 @@ Add these environment variables in Render:
 
 Do not omit `DATABASE_URL` on Render: without it, the app falls back to local SQLite, which is not durable on a hosted service. Migrations run at startup before the app bootstraps the admin account. This Python service serves the API; it will not include the React site unless the frontend is built into `dist` as in the Docker deployment.
 
+### Loading verified cricket data
+
+The verified fixture seed is deliberately separate from application startup. After
+deploying migrations, run this command once against the same `DATABASE_URL` used
+by the deployed service:
+
+```text
+python -m backend.scripts.import_verified_cricket_batch_1
+```
+
+The script is idempotent: it creates only missing teams, series relationships,
+and matches, so it is safe to rerun. It uses PostgreSQL automatically when the
+deployment has `DATABASE_URL` set; otherwise it uses the local SQLite fallback.
+
 ## API
 
 - `GET /api/v1/matches` and `GET /api/v1/matches/{id}` are public.
