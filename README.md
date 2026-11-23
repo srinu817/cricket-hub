@@ -51,7 +51,7 @@ Use these commands:
 
 ```text
 Build Command: pip install -r requirements.txt
-Start Command: python -m alembic upgrade head && python -m backend.scripts.import_verified_cricket_batch_1 && python -m backend.scripts.import_verified_cricket_batch_2 && uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+Start Command: python -m alembic upgrade head && python -m backend.scripts.import_verified_cricket_batch_1 && python -m backend.scripts.import_verified_cricket_batch_2 && python -m backend.scripts.import_verified_cricket_batch_3 && uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
 ```
 
 The application variable is `app` in `backend/app/main.py`. Do not use `uvicorn main:app`: there is no repository-root `main.py`, and when the service root is set to `backend/app`, the parent `backend` package is no longer importable.
