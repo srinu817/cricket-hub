@@ -206,13 +206,17 @@ function MatchesPage({ matches }: { matches: Match[] }) {
   const status = params.get('status') || 'All'
   const format = params.get('format') || 'All'
   const date = params.get('date') || ''
+  const series = params.get('series') || ''
+  const team = params.get('team') || ''
   useEffect(() => setQuery(params.get('q') || ''), [params])
   const filtered = matches.filter(match =>
     (status === 'All' || match.status === status) &&
     (format === 'All' || match.format === format) &&
     (!date || match.date === date) &&
+    (!series || match.series === series) &&
+    (!team || match.team1 === team || match.team2 === team) &&
     `${match.team1} ${match.team2} ${match.series} ${match.team1Code} ${match.team2Code}`.toLowerCase().includes(query.toLowerCase())
-  )
+  ).sort((first, second) => first.date.localeCompare(second.date) || first.time.localeCompare(second.time) || first.stage.localeCompare(second.stage))
   const setFilter = (key: string, value: string) => setParams(current => {
     const next = new URLSearchParams(current)
     if (value === 'All' || !value) next.delete(key)
@@ -225,6 +229,7 @@ function MatchesPage({ matches }: { matches: Match[] }) {
       <label className="date-filter"><span className="visually-hidden">Match date</span><input aria-label="Match date" type="date" value={date} onChange={event => setFilter('date', event.target.value)}/></label>
       <label className="select-filter"><span className="visually-hidden">Format</span><select value={format} onChange={event => setFilter('format', event.target.value)}><option value="All">All formats</option>{[...new Set(matches.map(match => match.format))].sort().map(item => <option key={item}>{item}</option>)}</select><ChevronDown size={15}/></label>
     </div>
+    {(series || team) && <div className="active-filters">{series && <button onClick={() => setFilter('series', '')}>Series: {series} ×</button>}{team && <button onClick={() => setFilter('team', '')}>Team: {team} ×</button>}</div>}
     {filtered.length ? <div className="match-grid page-grid">{filtered.map(match => <MatchCard key={match.id} match={match}/>)}</div> :
       <EmptyState title="No matches found" message="Try a different search or filter. Admins can add matches from the admin area."/ >}
   </main>
@@ -772,13 +777,17 @@ function MatchForm({
 
 function ListingPage({ title, matches }: { title: string; matches: Match[] }) {
   const records = useMemo(() => {
-    if (title === 'Series') return [...new Set(matches.map(match => match.series))]
-    if (title === 'Teams') return [...new Set(matches.flatMap(match => [match.team1, match.team2]))]
+    if (title === 'Series') return [...new Set([...matches].sort((first, second) => first.date.localeCompare(second.date)).map(match => match.series))]
+    if (title === 'Teams') return [...new Set(matches.flatMap(match => [match.team1, match.team2]))].sort((first, second) => first.localeCompare(second))
     if (title === 'Players') return [...new Set(matches.flatMap(match => match.innings.flatMap(innings => [...innings.batting.map(row => row.player), ...innings.bowling.map(row => row.player)])))]
     return []
   }, [matches, title])
   return <main className="page"><div className="page-title"><span className="eyebrow">CRICKET HUB</span><h1>{title}</h1></div>
-    {records.length ? <div className={title === 'Players' ? 'player-grid' : 'team-grid'}>{records.map((record, index) => <div className={title === 'Players' ? 'player-card' : 'team-card'} key={record}>{title === 'Players' ? <div className="avatar">{record.split(' ').map(part => part[0]).join('').slice(0, 2)}</div> : <TeamBadge code={record.slice(0, 3)}/>}<div><h3>{record}</h3><span>{title === 'Series' ? 'Series in match schedule' : title === 'Teams' ? 'Listed in match schedule' : `Scorecard entries · ${index + 1}`}</span></div></div>)}</div> :
+    {records.length ? <div className={title === 'Players' ? 'player-grid' : 'team-grid'}>{records.map((record, index) => {
+      const destination = title === 'Series' ? `/matches?series=${encodeURIComponent(record)}` : title === 'Teams' ? `/matches?team=${encodeURIComponent(record)}` : ''
+      const content = <>{title === 'Players' ? <div className="avatar">{record.split(' ').map(part => part[0]).join('').slice(0, 2)}</div> : <TeamBadge code={record.slice(0, 3)}/>}<div><h3>{record}</h3><span>{title === 'Series' ? 'View fixtures' : title === 'Teams' ? 'View fixtures' : `Scorecard entries · ${index + 1}`}</span></div></>
+      return destination ? <Link className="team-card" key={record} to={destination}>{content}</Link> : <div className="player-card" key={record}>{content}</div>
+    })}</div> :
       <EmptyState title={`No ${title.toLowerCase()} yet`} message="This section is populated from match information entered by an administrator."/ >}
   </main>
 }
